@@ -1,0 +1,16 @@
+canvas {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+}
+
+body {
+/*    background-image: url("./bg/bg.webp");
+    background-size: cover;
+    background-repeat: no-repeat;
+*/
+    background: black;
+}

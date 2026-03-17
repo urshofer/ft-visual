@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "slevesque.shader",
+    "nicolo-ribaudo.jsdoc-slim-lsp"
+  ]
+}
