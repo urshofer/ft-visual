@@ -18,8 +18,11 @@
   },
   "dependencies": {
     "@dimforge/rapier3d": "^0.19.3",
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "ammo.js": "^0.0.10",
     "lil-gui": "^0.21.0",
-    "three": "^0.182.0"
-  }
+    "three": "^0.182.0",
+    "three-projected-material": "^2.2.2"
+  },
+  "packageManager": "pnpm@8.8.0+sha1.9922e8b650d393700209ccd81e0ebdbcbe43b0d3"
 }

@@ -8,6 +8,9 @@ dependencies:
   '@dimforge/rapier3d':
     specifier: ^0.19.3
     version: 0.19.3
+  '@dimforge/rapier3d-compat':
+    specifier: ^0.19.3
+    version: 0.19.3
   ammo.js:
     specifier: ^0.0.10
     version: 0.0.10
@@ -17,6 +20,9 @@ dependencies:
   three:
     specifier: ^0.182.0
     version: 0.182.0
+  three-projected-material:
+    specifier: ^2.2.2
+    version: 2.2.2(three@0.182.0)
 
 devDependencies:
   esbuild:
@@ -30,6 +36,10 @@ devDependencies:
     version: 7.3.1
 
 packages:
+
+  /@dimforge/rapier3d-compat@0.19.3:
+    resolution: {integrity: sha512-mMVdSj1PRTT108s9Swbu2GQOmHbn8kbJANRV5xfczL3s0T4vkgZAuoMRgvBzQcHanpKusbC0ZJj6z3mC3aj3vg==}
+    dev: false
 
   /@dimforge/rapier3d@0.19.3:
     resolution: {integrity: sha512-tkD1tvHTDML0W9s9rUYAsx0btO9LbVTnMBKJWVgOsas5haGFbYY+pzr5hbwYysv/IJmgmMrIFoVWIcsaCUE9ow==}
@@ -1091,6 +1101,14 @@ packages:
     dependencies:
       has-flag: 4.0.0
     dev: true
+
+  /three-projected-material@2.2.2(three@0.182.0):
+    resolution: {integrity: sha512-KyM8cVwruYCq6NkkCk40KGkxbqMcT23m3Wu1KQtcaFobz2TGhWFPoTQod9WIsLZ68hcwVDuhiN0DSg/CeG/c2A==}
+    peerDependencies:
+      three: '*'
+    dependencies:
+      three: 0.182.0
+    dev: false
 
   /three@0.182.0:
     resolution: {integrity: sha512-GbHabT+Irv+ihI1/f5kIIsZ+Ef9Sl5A1Y7imvS5RQjWgtTPfPnZ43JmlYI7NtCRDK9zir20lQpfg8/9Yd02OvQ==}

@@ -3,60 +3,123 @@ import { RapierPhysics } from "./rapier.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { TextureLoader } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { VHSShader } from './VHSShader.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import GUI from 'lil-gui';
-import { createPaintOverlay, resizePaintOverlay, uploadTexture, splat, clearSim, splashParams } from './paintSplash.js';
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { VHSShader } from "./VHSShader.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import GUI from "lil-gui";
+import {
+  createPaintOverlay,
+  resizePaintOverlay,
+  uploadTexture,
+  splat,
+  clearSim,
+  splashParams,
+} from "./paintSplash.js";
 
-let context
-let analyser
-let mediaSource
+let context;
+let analyser;
+let mediaSource;
 
-function getUserMedia(
-    dictionary,
-    callback
-) {
-    try {
-        navigator.getUserMedia =
-            navigator.getUserMedia ||
-            (navigator).webkitGetUserMedia ||
-            (navigator).mozGetUserMedia
-        navigator.getUserMedia(dictionary, callback, (e) => {
-            console.dir(e)
-        })
-    } catch (e) {
-        alert('getUserMedia threw exception :' + e)
-    }
+function getUserMedia(dictionary, callback) {
+  try {
+    navigator.getUserMedia =
+      navigator.getUserMedia ||
+      navigator.webkitGetUserMedia ||
+      navigator.mozGetUserMedia;
+    navigator.getUserMedia(dictionary, callback, (e) => {
+      console.dir(e);
+    });
+  } catch (e) {
+    alert("getUserMedia threw exception :" + e);
+  }
 }
 
-function connectAudioAPI() {
-    try {
-        context = new AudioContext()
-        analyser = context.createAnalyser()
-        analyser.fftSize = 2048
+let currentStream = null;
+const audioDevices = {};
+const audioParams = { device: "", micEnabled: false };
 
-        navigator.mediaDevices
-            .getUserMedia({ audio: true, video: false })
-            .then(function (stream) {
-                mediaSource = context.createMediaStreamSource(stream)
-                mediaSource.connect(analyser)
-                init()
-                context.resume()
-            })
-            .catch(function (err) {
-                alert(err)
-            })
-    } catch (e) {
-        alert(e)
+function connectAudioAPI(deviceId) {
+  try {
+    if (!context) {
+      context = new AudioContext();
+      analyser = context.createAnalyser();
+      analyser.fftSize = 128;
     }
+
+    disconnectAudio();
+
+    const constraints = {
+      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+      video: false,
+    };
+
+    navigator.mediaDevices
+      .getUserMedia(constraints)
+      .then(function (stream) {
+        currentStream = stream;
+        mediaSource = context.createMediaStreamSource(stream);
+        mediaSource.connect(analyser);
+        context.resume();
+      })
+      .catch(function (err) {
+        alert(err);
+      });
+  } catch (e) {
+    alert(e);
+  }
 }
 
-const longAvg = []
-const longAvgFrameCount = 600
+function disconnectAudio() {
+  if (currentStream) {
+    currentStream.getTracks().forEach((t) => t.stop());
+    currentStream = null;
+  }
+  if (mediaSource) {
+    mediaSource.disconnect();
+    mediaSource = null;
+  }
+}
+
+// Request permission, enumerate devices, and start listening to the mic.
+async function enableMic() {
+  // Request permission first to get device labels
+  const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  tempStream.getTracks().forEach((t) => t.stop());
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const audioInputs = devices.filter((d) => d.kind === "audioinput");
+
+  for (const key of Object.keys(audioDevices)) delete audioDevices[key];
+  audioInputs.forEach((d) => {
+    const label = d.label || `Input ${d.deviceId.slice(0, 8)}`;
+    audioDevices[label] = d.deviceId;
+  });
+
+  const firstId =
+    audioDevices[audioParams.device] || audioInputs[0]?.deviceId || "";
+  audioParams.device = Object.keys(audioDevices)[0] || "";
+  connectAudioAPI(firstId);
+}
+
+async function startAudio() {
+  if (audioParams.micEnabled) {
+    try {
+      await enableMic();
+    } catch (e) {
+      console.warn("Mic could not be enabled:", e);
+    }
+  }
+  init();
+}
+
+const longAvg = [];
+const longAvgFrameCount = 300;
 function updateFFT() {
+  if (!analyser) {
+    return { average: 0, longAverage: 0, max: 0 };
+  }
   const data = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteFrequencyData(data);
 
@@ -66,31 +129,24 @@ function updateFFT() {
   }
   const average = sum / data.length;
 
-  longAvg.push(average)
+  longAvg.push(average > 128 ? average : 0);
+
   if (longAvg.length > longAvgFrameCount) {
-    longAvg.shift()
+    longAvg.shift();
   }
   let lsum = 0;
   for (let i = 0; i < longAvg.length; i++) {
     lsum += longAvg[i];
   }
-  const longAverage = lsum / longAvg.length;
-
+  const longAverage = longAvg.length > 0 ? lsum / longAvg.length : 0;
 
   // Normalize (0–255 → 0–1)
-  return {average: average / 255, longAverage: longAverage, max: Math.max(...data) / 255 };
+  return {
+    average: average / 255,
+    longAverage: longAverage,
+    max: Math.max(...data) / 255,
+  };
 }
-
-
-
-
-
-
-
-
-
-
-
 
 let camera, scene, renderer, stats, dirLight, composer, vhsPass, camRot;
 let paintOverlay;
@@ -109,19 +165,20 @@ const params = {
   wallY: 21,
   bricksCount: 2394,
   streetWidth: 15,
-  camHeight: 0.24,
-  fov: 50,
-  hemiIntensity: 1,
-  pointIntensity: 6,
+  camHeight: 0.15,
+  lookUp: 0.7,
+  fov: 86,
+  hemiIntensity: 0.1,
+  pointIntensity: 5.5,
   pointDecay: 0.25,
-  vhsScanlines: 0.15,
+  vhsScanlines: 0.02,
   vhsNoise: 0.08,
-  vhsColorBleed: 0.003,
-  vhsDistortion: 0.001,
+  vhsColorBleed: 0.002,
+  vhsDistortion: 0,
   vhsNoiseAudioAdd: 0.15,
-  vhsDistortionAudioAdd: 0.005,
-  moveSpeedBase: 0.001,
-  moveSpeedAudioDiv: 500,
+  vhsDistortionAudioAdd: 0.0005,
+  moveSpeedBase: 0.01,
+  moveSpeedAudioDiv: 350,
   rotSpeed: 5,
 };
 
@@ -153,7 +210,19 @@ const models = [
   { file: "guitar.obj", scale: 0.1 },
   { file: "snare.obj", scale: 0.1 },
   { file: "tenordrum.obj", scale: 0.1 },
-  { file: "Jever_Beer.obj", scale: 0.03, material: { color: 0x0a5f0a, emissive: 0x0a5f0a, emissiveIntensity: 0.8, roughness: 0.1, metalness: 0.3, transparent: true, opacity: 0.85 } },
+  {
+    file: "Jever_Beer.obj",
+    scale: 0.03,
+    material: {
+      color: 0x0a5f0a,
+      emissive: 0x0a5f0a,
+      emissiveIntensity: 0.8,
+      roughness: 0.1,
+      metalness: 0.3,
+      transparent: true,
+      opacity: 0.85,
+    },
+  },
 ];
 const loadedModels = [];
 const thrownModels = [];
@@ -168,23 +237,21 @@ const directions = {
 
 let currentDirection = directions.straight;
 
-const pathPoints = [
-  new THREE.Vector3(0,0,0),
-];
+const pathPoints = [new THREE.Vector3(0, 0, 0)];
 const minDistanceBetweenDirectionChange = 10;
 let directionCount = 0;
 let directionAngle = 0;
 const curveSpeed = 0.02;
 
 let camPos = 10;
-let moveSpeed = .02;
-const currentPosition = new THREE.Vector3(0,0,0);
-const targetPosition = new THREE.Vector3(0,0,0);
-const currentPositionT = new THREE.Vector3(1,0,0);
-const targetPositionT = new THREE.Vector3(1,0,0);
-let ready = false
+let moveSpeed = 0.02;
+const currentPosition = new THREE.Vector3(0, 0, 0);
+const targetPosition = new THREE.Vector3(0, 0, 0);
+const currentPositionT = new THREE.Vector3(1, 0, 0);
+const targetPositionT = new THREE.Vector3(1, 0, 0);
+let ready = false;
 
-connectAudioAPI()
+startAudio();
 
 async function init() {
   physics = await RapierPhysics();
@@ -199,7 +266,6 @@ async function init() {
     0.1,
     10000,
   );
-  
 
   scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0, 20, 100);
@@ -218,13 +284,30 @@ async function init() {
     scene.add(sky);
   });*/
 
-  const hemiLight = new THREE.HemisphereLight(0xccccff, 0xffffff, params.hemiIntensity);
+  const hemiLight = new THREE.HemisphereLight(
+    0xccccff,
+    0xffffff,
+    params.hemiIntensity,
+  );
   scene.add(hemiLight);
 
-  dirLight = new THREE.PointLight(0xffffff, params.pointIntensity, 0, params.pointDecay);
+  dirLight = new THREE.PointLight(
+    0xffffff,
+    params.pointIntensity,
+    0,
+    params.pointDecay,
+  );
 
-  dirLight.position.set(0, params.wallY * boxSize.y * 0.25, params.streetWidth * 0.5);
-  dirLight.lookAt(10, params.wallY * boxSize.y * 0.25, params.streetWidth * 0.5);
+  dirLight.position.set(
+    0,
+    params.wallY * boxSize.y * 0.25,
+    params.streetWidth * 0.5,
+  );
+  dirLight.lookAt(
+    10,
+    params.wallY * boxSize.y * 0.25,
+    params.streetWidth * 0.5,
+  );
 
   dirLight.castShadow = false;
   dirLight.shadow.camera.zoom = 2;
@@ -242,10 +325,10 @@ async function init() {
     new THREE.MeshBasicMaterial({ color: 0x333333 }),
   );
   floorCollider.position.y = -2.5;
-  floorCollider.userData.physics = { 
-    mass: 0, 
+  floorCollider.userData.physics = {
+    mass: 0,
     restitution: 0,
-    friction: 1
+    friction: 1,
   };
   floorCollider.visible = false;
   scene.add(floorCollider);
@@ -270,7 +353,7 @@ async function init() {
   boxes.userData.physics = {
     mass: 3,
     restitution: 0,
-    friction: .5,
+    friction: 0.5,
     rollingFriction: 0,
     linearDamping: 0,
     angularDamping: 0,
@@ -281,7 +364,6 @@ async function init() {
     const c = Math.random() * 0.5 + 0.5;
     boxes.setColorAt(i, color.setRGB(c, c, c));
   }
-
   scene.add(boxes);
 
   // Paint splash overlay (attached to camera)
@@ -295,145 +377,202 @@ async function init() {
   renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: true,
+    powerPreference: "high-performance",
   });
+
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
 
+  // postprocessing
 
-				// postprocessing
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
 
-				composer = new EffectComposer( renderer );
-				composer.addPass( new RenderPass( scene, camera ) );
+  vhsPass = new ShaderPass(VHSShader);
+  composer.addPass(vhsPass);
 
-				vhsPass = new ShaderPass( VHSShader );
-				composer.addPass( vhsPass );
-
-				composer.addPass( new OutputPass() );
-
-
+  composer.addPass(new OutputPass());
 
   window.addEventListener("resize", onWindowResize);
-  window.addEventListener("keyup", onmousedown);
-  window.addEventListener("click", () => {
-    splat(0.5 + (Math.random() - 0.5) * 0.4, 0.5 + (Math.random() - 0.5) * 0.4);
-  });
+  window.addEventListener("keydown", onmousedown);
 
+  // Reset clock after tab switch so first frame doesn't get a huge delta
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      clock.getDelta(); // discard accumulated time
+    }
+  });
 
   /*const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.y = 0;
   controls.target.z = 0;
   controls.target.x = 0;
   controls.update();*/
-  renderer.setAnimationLoop(animate);
 
   // --- GUI ---
-  const gui = new GUI({ title: 'Settings' });
-  gui.domElement.style.display = 'none';
+  const gui = new GUI({ title: "Settings" });
+  gui.domElement.style.display = "none";
   window.__gui = gui;
 
-  const fScene = gui.addFolder('Scene');
-  fScene.add(params, 'scale', 1, 30, 0.1).name('Scale').onChange(recalcDerived);
-  fScene.add(params, 'wallY', 1, 60, 1).name('Wall Height');
-  fScene.add(params, 'streetWidth', 3, 50, 0.5).name('Street Width');
+  const fScene = gui.addFolder("Scene");
+  fScene.add(params, "scale", 1, 30, 0.1).name("Scale").onChange(recalcDerived);
+  fScene.add(params, "wallY", 1, 60, 1).name("Wall Height");
+  fScene.add(params, "streetWidth", 3, 50, 0.5).name("Street Width");
 
-  const fBox = gui.addFolder('Brick Size');
-  fBox.add(params, 'boxSizeX', 0.01, 1, 0.005).name('X').onChange(recalcDerived);
-  fBox.add(params, 'boxSizeY', 0.01, 0.5, 0.005).name('Y').onChange(recalcDerived);
-  fBox.add(params, 'boxSizeZ', 0.01, 1, 0.005).name('Z').onChange(recalcDerived);
-  fBox.add(params, 'gapX', 0, 0.2, 0.005).name('Gap X').onChange(recalcDerived);
-  fBox.add(params, 'gapY', 0, 0.2, 0.005).name('Gap Y').onChange(recalcDerived);
+  const fBox = gui.addFolder("Brick Size");
+  fBox
+    .add(params, "boxSizeX", 0.01, 1, 0.005)
+    .name("X")
+    .onChange(recalcDerived);
+  fBox
+    .add(params, "boxSizeY", 0.01, 0.5, 0.005)
+    .name("Y")
+    .onChange(recalcDerived);
+  fBox
+    .add(params, "boxSizeZ", 0.01, 1, 0.005)
+    .name("Z")
+    .onChange(recalcDerived);
+  fBox.add(params, "gapX", 0, 0.2, 0.005).name("Gap X").onChange(recalcDerived);
+  fBox.add(params, "gapY", 0, 0.2, 0.005).name("Gap Y").onChange(recalcDerived);
 
-  const fCam = gui.addFolder('Camera');
-  fCam.add(params, 'fov', 10, 150, 1).name('FOV').onChange(() => {
-    camera.fov = params.fov;
-    camera.updateProjectionMatrix();
-    resizePaintOverlay(paintOverlay, camera);
-  });
-  fCam.add(params, 'camHeight', 0.01, 1, 0.01).name('Cam Height');
-  fCam.add(params, 'rotSpeed', 0.1, 20, 0.1).name('Rot Speed');
+  const fCam = gui.addFolder("Camera");
+  fCam
+    .add(params, "fov", 10, 150, 1)
+    .name("FOV")
+    .onChange(() => {
+      camera.fov = params.fov;
+      camera.updateProjectionMatrix();
+      resizePaintOverlay(paintOverlay, camera);
+    });
+  fCam.add(params, "camHeight", 0.01, 1, 0.01).name("Cam Height");
+  fCam.add(params, "lookUp", -10, 10, 0.1).name("Look Up");
+  fCam.add(params, "rotSpeed", 0.1, 20, 0.1).name("Rot Speed");
 
-  const fMove = gui.addFolder('Movement');
-  fMove.add(params, 'moveSpeedBase', 0, 0.05, 0.001).name('Base Speed');
-  fMove.add(params, 'moveSpeedAudioDiv', 50, 2000, 10).name('Audio Divisor');
+  const fMove = gui.addFolder("Movement");
+  fMove.add(params, "moveSpeedBase", 0, 0.05, 0.001).name("Base Speed");
+  fMove.add(params, "moveSpeedAudioDiv", 50, 2000, 10).name("Audio Divisor");
 
-  const fLight = gui.addFolder('Lighting');
-  fLight.add(params, 'hemiIntensity', 0, 5, 0.1).name('Hemi Intensity').onChange(() => {
-    hemiLight.intensity = params.hemiIntensity;
-  });
-  fLight.add(params, 'pointIntensity', 0, 20, 0.1).name('Point Intensity').onChange(() => {
-    dirLight.intensity = params.pointIntensity;
-  });
-  fLight.add(params, 'pointDecay', 0, 2, 0.01).name('Point Decay').onChange(() => {
-    dirLight.decay = params.pointDecay;
-  });
+  const fLight = gui.addFolder("Lighting");
+  fLight
+    .add(params, "hemiIntensity", 0, 5, 0.1)
+    .name("Hemi Intensity")
+    .onChange(() => {
+      hemiLight.intensity = params.hemiIntensity;
+    });
+  fLight
+    .add(params, "pointIntensity", 0, 20, 0.1)
+    .name("Point Intensity")
+    .onChange(() => {
+      dirLight.intensity = params.pointIntensity;
+    });
+  fLight
+    .add(params, "pointDecay", 0, 2, 0.01)
+    .name("Point Decay")
+    .onChange(() => {
+      dirLight.decay = params.pointDecay;
+    });
 
-  const fShader = gui.addFolder('VHS Effect');
-  fShader.add(params, 'vhsScanlines', 0, 0.5, 0.01).name('Scanlines');
-  fShader.add(params, 'vhsNoise', 0, 0.3, 0.01).name('Noise');
-  fShader.add(params, 'vhsColorBleed', 0, 0.02, 0.001).name('Color Bleed');
-  fShader.add(params, 'vhsDistortion', 0, 0.01, 0.0005).name('Distortion');
-  fShader.add(params, 'vhsNoiseAudioAdd', 0, 0.5, 0.01).name('Noise Audio Add');
-  fShader.add(params, 'vhsDistortionAudioAdd', 0, 0.02, 0.001).name('Distort Audio Add');
+  const fShader = gui.addFolder("VHS Effect");
+  fShader.add(params, "vhsScanlines", 0, 0.5, 0.01).name("Scanlines");
+  fShader.add(params, "vhsNoise", 0, 0.3, 0.01).name("Noise");
+  fShader.add(params, "vhsColorBleed", 0, 0.02, 0.001).name("Color Bleed");
+  fShader.add(params, "vhsDistortion", 0, 0.01, 0.0005).name("Distortion");
+  fShader.add(params, "vhsNoiseAudioAdd", 0, 0.5, 0.01).name("Noise Audio Add");
+  fShader
+    .add(params, "vhsDistortionAudioAdd", 0, 0.02, 0.001)
+    .name("Distort Audio Add");
 
-  const fPaint = gui.addFolder('Paint Splash');
-  fPaint.add(splashParams, 'size', 6, 38, 1).name('Size');
-  fPaint.add(splashParams, 'flow', 1, 10, 1).name('Flow');
-  fPaint.add(splashParams, 'wait', 0, 120, 1).name('Wait');
-  fPaint.add(splashParams, 'blur', 0, 8, 0.5).name('Blur');
-  fPaint.add({ clear: clearSim }, 'clear').name('Clear');
+  const fPaint = gui.addFolder("Paint Splash");
+  fPaint.add(splashParams, "size", 6, 38, 1).name("Size");
+  fPaint.add(splashParams, "flow", 1, 10, 1).name("Flow");
+  fPaint.add(splashParams, "wait", 0, 120, 1).name("Wait");
+  fPaint.add(splashParams, "blur", 0, 8, 0.5).name("Blur");
+  fPaint.add({ clear: clearSim }, "clear").name("Clear");
 
-  let initBuildUp = 0
+  const fAudio = gui.addFolder("Audio");
+  let deviceController = fAudio
+    .add(audioParams, "device", audioDevices)
+    .name("Input")
+    .onChange((deviceId) => {
+      if (audioParams.micEnabled) connectAudioAPI(deviceId);
+    });
+
+  fAudio
+    .add(audioParams, "micEnabled")
+    .name("Enable Mic")
+    .onChange(async (enabled) => {
+      if (enabled) {
+        try {
+          await enableMic();
+        } catch (e) {
+          console.warn("Mic could not be enabled:", e);
+          audioParams.micEnabled = false;
+        }
+      } else {
+        disconnectAudio();
+      }
+      // Rebuild the device dropdown with the latest device list
+      deviceController = deviceController
+        .options(audioDevices)
+        .name("Input")
+        .onChange((deviceId) => {
+          if (audioParams.micEnabled) connectAudioAPI(deviceId);
+        });
+      gui.controllers.forEach((c) => c.updateDisplay());
+      fAudio.controllers.forEach((c) => c.updateDisplay());
+    });
+
+  let initBuildUp = 0;
   const b = () => {
-    buildup()
-    initBuildUp++
+    buildup();
+    initBuildUp++;
     if (initBuildUp < wallX) {
-      setTimeout(b, 0)
+      setTimeout(b, 0);
     }
     if (pathPoints.length > 12) {
       currentPosition.copy(pathPoints[camPos]);
       currentPositionT.copy(pathPoints[camPos + 1]);
-      ready = true
+      ready = true;
     }
-  }
-  b()
+  };
+  setTimeout(() => b(), 3000);
+  renderer.setAnimationLoop(animate);
 }
-
 
 const buildup = () => {
   // get last Point
-  const lastPoint = pathPoints[pathPoints.length - 1]
-  
+  const lastPoint = pathPoints[pathPoints.length - 1];
+
   // change direction
   if (directionCount > minDistanceBetweenDirectionChange) {
-    directionCount = 0
+    directionCount = 0;
     const keys = Object.keys(directions);
-    currentDirection = directions[keys[Math.floor(Math.random() * keys.length)]];
-  }
-  else {
-    directionCount++
+    currentDirection =
+      directions[keys[Math.floor(Math.random() * keys.length)]];
+  } else {
+    directionCount++;
   }
 
   if (currentDirection === directions.left) {
-    directionAngle -= curveSpeed
-  }
-  else if (currentDirection === directions.right) {
-    directionAngle += curveSpeed
+    directionAngle -= curveSpeed;
+  } else if (currentDirection === directions.right) {
+    directionAngle += curveSpeed;
   }
 
   // Add a point
-  const distance = boxSize.x + gap.x
+  const distance = boxSize.x + gap.x;
   const newPoint = new THREE.Vector3(
     lastPoint.x + Math.cos(directionAngle) * distance,
     0,
     lastPoint.z + Math.sin(directionAngle) * distance,
-  )
+  );
   const oddRow = new THREE.Vector3(
     lastPoint.x + Math.cos(directionAngle) * (distance * 1.5),
     0,
     lastPoint.z + Math.sin(directionAngle) * (distance * 1.5),
-  )  
-  pathPoints.push(newPoint)
+  );
+  pathPoints.push(newPoint);
 
   /*let m = new THREE.Mesh(
     new THREE.SphereGeometry(0.5),
@@ -443,46 +582,52 @@ const buildup = () => {
   m.position.set(newPoint.x,1,newPoint.z)*/
 
   // Wall Points
-  const streetDistance = (params.streetWidth * .5) + (Math.random() * .4 - .2)
+  const streetDistance = params.streetWidth * 0.5 + (Math.random() * 0.4 - 0.2);
   const wallPoints = [
     [
       new THREE.Vector3(
-        newPoint.x + Math.cos(directionAngle - Math.PI * .5) * streetDistance,
+        newPoint.x + Math.cos(directionAngle - Math.PI * 0.5) * streetDistance,
         0,
-        newPoint.z + Math.sin(directionAngle - Math.PI * .5) * streetDistance,
+        newPoint.z + Math.sin(directionAngle - Math.PI * 0.5) * streetDistance,
       ),
       new THREE.Vector3(
-        oddRow.x + Math.cos(directionAngle - Math.PI * .5) * streetDistance,
+        oddRow.x + Math.cos(directionAngle - Math.PI * 0.5) * streetDistance,
         0,
-        oddRow.z + Math.sin(directionAngle - Math.PI * .5) * streetDistance,
+        oddRow.z + Math.sin(directionAngle - Math.PI * 0.5) * streetDistance,
       ),
     ],
     [
       new THREE.Vector3(
-        newPoint.x + Math.cos(directionAngle +  Math.PI * .5) * streetDistance,
+        newPoint.x + Math.cos(directionAngle + Math.PI * 0.5) * streetDistance,
         0,
-        newPoint.z + Math.sin(directionAngle +  Math.PI * .5) * streetDistance,
+        newPoint.z + Math.sin(directionAngle + Math.PI * 0.5) * streetDistance,
       ),
       new THREE.Vector3(
-        oddRow.x + Math.cos(directionAngle +  Math.PI * .5) * streetDistance,
+        oddRow.x + Math.cos(directionAngle + Math.PI * 0.5) * streetDistance,
         0,
-        oddRow.z + Math.sin(directionAngle +  Math.PI * .5) * streetDistance,
-      )
-    ]
-  ]
+        oddRow.z + Math.sin(directionAngle + Math.PI * 0.5) * streetDistance,
+      ),
+    ],
+  ];
 
   // Build two Brick Towers at WallPoints[0,1], make them look at newPoint
-  let _brickOffset = (pathPoints.length - 1) * (2 * params.wallY) % params.bricksCount
+  let _brickOffset =
+    ((pathPoints.length - 1) * (2 * params.wallY)) % params.bricksCount;
   const s = (stack = 0, wallCenter, brickOffset) => {
     if (stack < params.wallY) {
       const position = new THREE.Vector3(
-        wallCenter[stack % 2].x, 
-        boxSize.y / 2 + (stack * (boxSize.y + gap.y)),
-        wallCenter[stack % 2].z 
-      );  
-      physics.setMeshPosition(boxes, position, brickOffset + stack);  
+        wallCenter[stack % 2].x,
+        boxSize.y / 2 + stack * (boxSize.y + gap.y),
+        wallCenter[stack % 2].z,
+      );
+      physics.setMeshPosition(boxes, position, brickOffset + stack);
       const direction = new THREE.Vector3()
-        .subVectors(stack % 2 == 0 ? new THREE.Vector3(newPoint.x, 0, newPoint.z) : new THREE.Vector3(oddRow.x, 0, oddRow.z),  new THREE.Vector3(position.x, 0, position.z))
+        .subVectors(
+          stack % 2 == 0
+            ? new THREE.Vector3(newPoint.x, 0, newPoint.z)
+            : new THREE.Vector3(oddRow.x, 0, oddRow.z),
+          new THREE.Vector3(position.x, 0, position.z),
+        )
         .normalize();
       const forward = new THREE.Vector3(0, 0, 1); // object's default forward axis
       const q = new THREE.Quaternion();
@@ -490,20 +635,22 @@ const buildup = () => {
       physics.setMeshRotation(boxes, q, brickOffset + stack);
       brickPositions[brickOffset + stack] = {
         position: position,
-        rotation: q
-      }
-      stack++
-      setTimeout(() => {s(stack, wallCenter, brickOffset)}, 50)
+        rotation: q,
+      };
+      stack++;
+      setTimeout(() => {
+        s(stack, wallCenter, brickOffset);
+      }, 50);
     } else {
       cleanup();
     }
-  }  
+  };
   wallPoints.forEach((_wallCenter, wallKey) => {
-    s(0, _wallCenter, _brickOffset + wallKey * params.wallY)
-  })
+    s(0, _wallCenter, _brickOffset + wallKey * params.wallY);
+  });
 };
 
-const cleanup = (factor = .3) => {
+const cleanup = (factor = 0.3) => {
   // Clamp factor between 0 and 1
   factor = Math.max(0, Math.min(1, factor));
 
@@ -540,59 +687,72 @@ const cleanup = (factor = .3) => {
     physics.setMeshPosition(boxes, brickPositions[idx].position, idx);
   }
 };
-  
 
 const onWindowResize = () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize( window.innerWidth, window.innerHeight );
+  composer.setSize(window.innerWidth, window.innerHeight);
   resizePaintOverlay(paintOverlay, camera);
-}
+};
 
 const baseQuat = new THREE.Quaternion();
 const rotatedQuat = new THREE.Quaternion();
 const finalQuat = new THREE.Quaternion();
 
-let rotBlend = 0;        // 0 → normal, 1 → rotated
-let rotTarget = 0;       // tween target
+let rotBlend = 0; // 0 → normal, 1 → rotated
+let rotTarget = 0; // tween target
 const clock = new THREE.Clock();
 
+const MAX_DELTA = 0.1; // cap to prevent huge jumps after tab switch
+
 const animate = () => {
-    const delta = clock.getDelta(); // seconds since last frame
+  const rawDelta = clock.getDelta();
+  const delta = Math.min(rawDelta, MAX_DELTA);
 
-  const {average:volume, longAverage, max} = updateFFT()
-  moveSpeed = params.moveSpeedBase + (longAverage / params.moveSpeedAudioDiv)
+  const { average: volume, longAverage, max } = updateFFT();
+  moveSpeed = params.moveSpeedBase + longAverage / params.moveSpeedAudioDiv;
 
-  vhsPass.uniforms['time'].value += delta;
-  vhsPass.uniforms['scanlineIntensity'].value = params.vhsScanlines;
-  vhsPass.uniforms['noiseIntensity'].value = params.vhsNoise + max * params.vhsNoiseAudioAdd;
-  vhsPass.uniforms['colorBleed'].value = params.vhsColorBleed;
-  vhsPass.uniforms['distortion'].value = params.vhsDistortion + max * params.vhsDistortionAudioAdd;
+  vhsPass.uniforms["time"].value += delta;
+  vhsPass.uniforms["scanlineIntensity"].value = params.vhsScanlines;
+  vhsPass.uniforms["noiseIntensity"].value =
+    params.vhsNoise + max * params.vhsNoiseAudioAdd;
+  vhsPass.uniforms["colorBleed"].value = params.vhsColorBleed;
+  vhsPass.uniforms["distortion"].value =
+    params.vhsDistortion + max * params.vhsDistortionAudioAdd;
 
-
-  if (camPos < pathPoints.length - 1 && pathPoints.length > 12 && ready) {
-    targetPosition.copy(pathPoints[camPos + 1]);
-    targetPositionT.copy(pathPoints[camPos + 2]);
-    const direction = new THREE.Vector3()
-      .subVectors(targetPosition, currentPosition);
-    const directionT = new THREE.Vector3()
-      .subVectors(targetPositionT, currentPositionT);      
-    const distance = direction.length();
-    if (distance < 0.001) {
-      camPos++;
+  if (pathPoints.length > 12 && ready) {
+    // Ensure there are enough path points ahead before moving
+    if (camPos >= pathPoints.length - 2) {
+      buildup();
     } else {
-      direction.normalize();
-      directionT.normalize();
-      const step = moveSpeed;
-      if (step >= distance) {
-        currentPosition.copy(targetPosition);
-        currentPositionT.copy(targetPositionT);
+      targetPosition.copy(pathPoints[camPos + 1]);
+      targetPositionT.copy(pathPoints[camPos + 2]);
+      const direction = new THREE.Vector3().subVectors(
+        targetPosition,
+        currentPosition,
+      );
+      const directionT = new THREE.Vector3().subVectors(
+        targetPositionT,
+        currentPositionT,
+      );
+      const distance = direction.length();
+      if (distance < 0.001) {
         camPos++;
-        buildup()
+        buildup();
       } else {
-        currentPosition.addScaledVector(direction, step);
-        currentPositionT.addScaledVector(directionT, step);
+        direction.normalize();
+        directionT.normalize();
+        const step = moveSpeed;
+        if (step >= distance) {
+          currentPosition.copy(targetPosition);
+          currentPositionT.copy(targetPositionT);
+          camPos++;
+          buildup();
+        } else {
+          currentPosition.addScaledVector(direction, step);
+          currentPositionT.addScaledVector(directionT, step);
+        }
       }
     }
   }
@@ -600,33 +760,37 @@ const animate = () => {
   camera.position.set(
     currentPosition.x,
     params.wallY * boxSize.y * params.camHeight + volume,
-    currentPosition.z
+    currentPosition.z,
   );
 
   // Smooth blend value
-rotBlend = THREE.MathUtils.damp(rotBlend, camRot ? 1 : 0, params.rotSpeed, delta);
+  rotBlend = THREE.MathUtils.damp(
+    rotBlend,
+    camRot ? 1 : 0,
+    params.rotSpeed,
+    delta,
+  );
 
-// Base orientation
-camera.lookAt(
-  currentPositionT.x,
-  params.wallY * boxSize.y * params.camHeight + volume,
-  currentPositionT.z
-);
+  // Base orientation
+  camera.lookAt(
+    currentPositionT.x,
+    params.wallY * boxSize.y * params.camHeight + volume + params.lookUp,
+    currentPositionT.z,
+  );
 
-baseQuat.copy(camera.quaternion);
+  baseQuat.copy(camera.quaternion);
 
-// 2️⃣ 90° rotated version
-const q90 = new THREE.Quaternion();
-q90.setFromAxisAngle(camera.up, Math.PI / 2);
+  // 2️⃣ 90° rotated version
+  const q90 = new THREE.Quaternion();
+  q90.setFromAxisAngle(camera.up, Math.PI / 2);
 
-rotatedQuat.copy(baseQuat).multiply(q90);
+  rotatedQuat.copy(baseQuat).multiply(q90);
 
-// 3️⃣ Slerp (modern method)
-finalQuat.copy(baseQuat).slerp(rotatedQuat, rotBlend);
+  // 3️⃣ Slerp (modern method)
+  finalQuat.copy(baseQuat).slerp(rotatedQuat, rotBlend);
 
-// 4️⃣ Apply
-camera.quaternion.copy(finalQuat);
-  
+  // 4️⃣ Apply
+  camera.quaternion.copy(finalQuat);
 
   camCollider.position.copy(camera.position);
   dirLight.position.copy(camera.position);
@@ -643,14 +807,12 @@ camera.quaternion.copy(finalQuat);
   } else {
     renderer.render(scene, camera);
   }
-
-
-}
+};
 
 function toggleFullscreen() {
   if (!document.fullscreenElement) {
     // Enter fullscreen
-    document.body.requestFullscreen().catch(err => {
+    document.body.requestFullscreen().catch((err) => {
       console.warn(`Error attempting to enable fullscreen: ${err.message}`);
     });
   } else {
@@ -661,10 +823,13 @@ function toggleFullscreen() {
 
 function onmousedown(e) {
   if (e.code === "KeyX" || e.code === "Enter") {
-    if (Math.random() < 0.5) {
+    if (Math.random() < 0.75) {
       throwRandomModel();
     } else {
-      splat(0.5 + (Math.random() - 0.5) * 0.4, 0.5 + (Math.random() - 0.5) * 0.4);
+      splat(
+        0.5 + (Math.random() - 0.5) * 0.4,
+        0.5 + (Math.random() - 0.5) * 0.4,
+      );
     }
     return;
   }
@@ -673,11 +838,11 @@ function onmousedown(e) {
     return;
   }
   if (e.code === "KeyR") {
-    camRot = !camRot
+    camRot = !camRot;
     return;
   }
   if (e.code === "KeyF") {
-    toggleFullscreen()
+    toggleFullscreen();
     return;
   }
   if (e.code === "KeyS") {
@@ -688,7 +853,7 @@ function onmousedown(e) {
     const gui = window.__gui;
     if (gui) {
       const el = gui.domElement;
-      el.style.display = el.style.display === 'none' ? '' : 'none';
+      el.style.display = el.style.display === "none" ? "" : "none";
     }
     return;
   }
@@ -720,7 +885,7 @@ const preloadModels = async () => {
   });
   await Promise.all(promises);
   console.log("Models preloaded:", loadedModels.length);
-}
+};
 
 // ---------- SPAWN & THROW ----------
 function throwRandomModel() {
@@ -728,7 +893,7 @@ function throwRandomModel() {
 
   const source = loadedModels[Math.floor(Math.random() * loadedModels.length)];
   const added = thrownModels.push(source.clone(true));
-  const model = thrownModels[added - 1]
+  const model = thrownModels[added - 1];
 
   // Position in front of camera
   model.position.copy(camera.position);
@@ -758,8 +923,8 @@ function throwRandomModel() {
   physics.setTorqueImpulse(model, rotation);
 
   if (thrownModels.length > maxThrownModels) {
-    physics.removeMesh(thrownModels[0])
-    scene.remove(thrownModels[0])
-    thrownModels.shift()
+    physics.removeMesh(thrownModels[0]);
+    scene.remove(thrownModels[0]);
+    thrownModels.shift();
   }
 }
